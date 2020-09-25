@@ -28,6 +28,7 @@ import logging
 # for saving model
 import pickle
 from operator import itemgetter
+import time
 
 #######################################################################
 #################### Variational Peak Model ###########################
@@ -325,8 +326,14 @@ class VariationalPeakModel():
             handle = self.test_iter # for standard validation of validation cell types
         else:
             raise Exception("No data exists for %s. Use function test_from_generator() if you want to create a new iterator." % (mode))
+        
+        # s_all = time.time_ns()
+        x = self.run_predictions(num_samples, handle, calculate_metrics)
+        # e_all = time.time_ns()
 
-        return self.run_predictions(num_samples, handle, calculate_metrics)
+        # print('Total run_predictions time: %i' % (e_all - s_all))
+
+        return x
 
     def test_from_generator(self, num_samples, ds, calculate_metrics=True):
         """
@@ -350,7 +357,7 @@ class VariationalPeakModel():
 
         :return predictions for all factors
         """
-
+        tmps = time.time_ns()
         input_shapes, output_shape, ds = generator_to_tf_dataset(load_data(data,
                  self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
                  self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
@@ -362,10 +369,14 @@ class VariationalPeakModel():
                  similarity_matrix = matrix,
                  similarity_assays = self.similarity_assays,
                  indices = indices), self.batch_size, 1, self.prefetch_size)
-
+        tmpe = time.time_ns()
+        print('generator: %i' % (tmpe-tmps))
         num_samples = len(indices)
 
-        results = self.run_predictions(num_samples, ds, calculate_metrics = False)
+        tmps = time.time_ns()
+        results = self.run_predictions(num_samples, ds, calculate_metrics = False, samples = 1)
+        tmpe = time.time_ns()
+        print('run_predictions: %i' % (tmpe - tmps))
 
         return results['preds_mean'], results['preds_std']
 
@@ -582,16 +593,24 @@ class VariationalPeakModel():
             3-dimensional numpy matrix of predictions: sized (samples by regions by ChIP-seq targets)
         """
 
+        s = time.time_ns()
         if all_data is None:
             all_data = concatenate_all_data(self.data, self.regionsFile)
+        e = time.time_ns()
+        print('concat: %i' % (e-s))
 
+        s = time.time_ns()
         regions_bed = bed2Pyranges(regions_peak_file)
         all_data_regions = bed2Pyranges(self.regionsFile)
+        e = time.time_ns()
+        print('bed2pyranges: %i' % (e - s))
 
         joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
 
         # select regions with data to score
         idx = joined['idx_alldata']
+
+        
 
         results = []
 
@@ -607,6 +626,7 @@ class VariationalPeakModel():
             results.append(means)
 
         # stack all samples along 0th axis
+        s = time.time_ns()
         tmp = np.stack(results)
 
         # get the index break for each region_bed region
@@ -626,6 +646,8 @@ class VariationalPeakModel():
         # fill missing indices with nans
         missing_indices = joined[joined['idx_alldata']==-1]['idx'].values
         final[:,missing_indices, :] = np.NAN
+        e = time.time_ns()
+        print('the rest: %i' % (e - s))
 
         return final
 
