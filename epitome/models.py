@@ -27,8 +27,13 @@ import logging
 
 # for saving model
 import pickle
+import os
 from operator import itemgetter
 import time
+
+import ray
+
+ray.init()
 
 #######################################################################
 #################### Variational Peak Model ###########################
@@ -610,10 +615,9 @@ class VariationalPeakModel():
         # select regions with data to score
         idx = joined['idx_alldata']
 
-        
-
         results = []
 
+        s = time.time_ns()
         # TODO 9/10/2020: should do something more efficiently than a for loop
         for sample_i in range(accessilibility_peak_matrix.shape[0]):
             # tuple of means and stds
@@ -624,6 +628,8 @@ class VariationalPeakModel():
 
             # group means by joined['idx']
             results.append(means)
+        e = time.time_ns()
+        print("total eval_vector time: %i" % (e - s))
 
         # stack all samples along 0th axis
         s = time.time_ns()
@@ -729,6 +735,7 @@ class VariationalPeakModel():
 
         return pd.concat([tmp[['Chromosome']],mean_results], axis=1)
 
+@ray.remote
 class VLP(VariationalPeakModel):
     def __init__(self,
              *args,
@@ -798,3 +805,13 @@ class VLP(VariationalPeakModel):
 
         model = tf.keras.models.Model(inputs=cell_inputs, outputs=outputs)
         return model
+
+
+if __name__ == '__main__':
+    x = np.random.rand(2, 1_000)
+    vlps = [VLP.remote(['CEBPB'], test_celltypes=['K562']) for _ in range(4)]
+    # VLPActor = VLP.remote(['CEBPB'], test_celltypes=['K562'])
+    
+    # result = VLPActor.score_matrix.remote(x, 'data/test_regions.bed', all_data = None)
+    # ray.get(result)
+    results = ray.get([v.score_matrix.remote(x, 'data/test_regions.bed', all_data = None) for v in vlps])
