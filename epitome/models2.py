@@ -26,15 +26,14 @@ import tqdm
 import logging
 
 # for saving model
-import dill as pickle
+import pickle
+import os
 from operator import itemgetter
+import time
 
-# import ray
-import multiprocessing
-from joblib import Parallel, delayed
-# ray.init()
+import ray
 
-import os, sys
+# ray.shutdown()
 
 #######################################################################
 #################### Variational Peak Model ###########################
@@ -332,8 +331,14 @@ class VariationalPeakModel():
             handle = self.test_iter # for standard validation of validation cell types
         else:
             raise Exception("No data exists for %s. Use function test_from_generator() if you want to create a new iterator." % (mode))
+        
+        # s_all = time.time_ns()
+        x = self.run_predictions(num_samples, handle, calculate_metrics)
+        # e_all = time.time_ns()
 
-        return self.run_predictions(num_samples, handle, calculate_metrics)
+        # print('Total run_predictions time: %i' % (e_all - s_all))
+
+        return x
 
     def test_from_generator(self, num_samples, ds, calculate_metrics=True):
         """
@@ -357,12 +362,62 @@ class VariationalPeakModel():
 
         :return predictions for all factors
         """
-        
+        tmps = time.time_ns()
+        input_shapes, output_shape, ds = generator_to_tf_dataset(load_data(data,
+                 self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
+                 self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
+                 self.matrix,
+                 self.assaymap,
+                 self.cellmap,
+                 radii = self.radii,
+                 mode = Dataset.RUNTIME,
+                 similarity_matrix = matrix,
+                 similarity_assays = self.similarity_assays,
+                 indices = indices), self.batch_size, 1, self.prefetch_size)
+        tmpe = time.time_ns()
+        print('generator: %i' % (tmpe-tmps))
         num_samples = len(indices)
 
-        results = self.run_predictions(num_samples, None, data, matrix, indices, calculate_metrics = False)
+        tmps = time.time_ns()
+        results = self.run_predictions(num_samples, ds, calculate_metrics = False, samples = 1)
+        tmpe = time.time_ns()
+        print('run_predictions: %i' % (tmpe - tmps))
 
         return results['preds_mean'], results['preds_std']
+    
+    def eval_vector_2(self, data, matrix, indices):
+        """
+        Evaluates a new cell type based on its chromatin (DNase or ATAC-seq) vector, as well
+        as any other similarity assays (acetylation, methylation, etc.). len(vector) should equal
+        the data.shape[1]
+        :param data: data to build features from
+        :param matrix: matrix of 0s/1s, where # rows match # similarity assays in model
+        :param indices: indices of vector to actually score. You need all of the locations for the generator.
+
+        :return predictions for all factors
+        """
+        tmps = time.time_ns()
+        input_shapes, output_shape, ds = generator_to_tf_dataset(load_data(data,
+                 self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
+                 self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
+                 self.matrix,
+                 self.assaymap,
+                 self.cellmap,
+                 radii = self.radii,
+                 mode = Dataset.RUNTIME,
+                 similarity_matrix = matrix,
+                 similarity_assays = self.similarity_assays,
+                 indices = indices), self.batch_size, 1, self.prefetch_size)
+        tmpe = time.time_ns()
+        print('generator: %i' % (tmpe-tmps))
+        num_samples = len(indices)
+
+        tmps = time.time_ns()
+        results = self.run_predictions(num_samples, ds, calculate_metrics = False, samples = 1)
+        tmpe = time.time_ns()
+        print('run_predictions: %i' % (tmpe - tmps))
+
+        return results['preds_mean']
 
 
     def _predict(self, numpy_matrix):
@@ -391,7 +446,7 @@ class VariationalPeakModel():
 
         return predict_step(numpy_matrix)
 
-    def run_predictions(self, num_samples, iter_, data, matrix, indices, calculate_metrics = True, samples = 50):
+    def run_predictions(self, num_samples, iter_, calculate_metrics = True, samples = 50):
         """
         Runs predictions on num_samples records
         :param num_samples: number of samples to test
@@ -429,43 +484,7 @@ class VariationalPeakModel():
             preds = tf.stack(tf.split(y_pred, samples, axis=0), axis=0)
             return tf.math.reduce_mean(preds, axis=0), tf.math.reduce_std(preds, axis=0)
 
-        # print('starting loop, batch size %i, process ID %i' % (batches, os.getpid()))
-        # # x = iter_.take(batches).as_numpy_iterator()
-        # # print(x)
-        # # lock.acquire()
-        # print('lock acquired by PID %i' % os.getpid())
-        
-        # for i in dataset.take(batches):
-        #     print(i)
-        # print('done')
-        # # lock.release()
-        print('middle')
-        lock.acquire()
-        print('lock acquired by PID %i' % os.getpid())
-        dataset = tf.data.Dataset.range(25)
-        iter_ = None
-        print('starting generator')
-        input_shapes, output_shape, v = generator_to_tf_dataset(load_data(data,
-                 self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
-                 self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
-                 self.matrix,
-                 self.assaymap,
-                 self.cellmap,
-                 radii = self.radii,
-                 mode = Dataset.RUNTIME,
-                 similarity_matrix = matrix,
-                 similarity_assays = self.similarity_assays,
-                 indices = indices), self.batch_size, 1, self.prefetch_size)
-        print('finished generator')
-
-        print('temp size: %i\ngenerator size: %i' % (sys.getsizeof(dataset), sys.getsizeof(v)))
-        sdf = v.take(3)
-        for i in v:
-            print(i[:-2])
-        print(sdf)
-        print('made an iterator')
-        for f in v.take(3):
-            print('in loop')
+        for f in tqdm.tqdm(iter_.take(batches)):
             inputs_b = f[:-2]
             truth_b = f[-2]
             weights_b = f[-1]
@@ -479,9 +498,8 @@ class VariationalPeakModel():
             preds_std.append(preds_std_b)
             truth.append(truth_b)
             sample_weight.append(weights_b)
-        
-        lock.release()
 
+        # concat all results
         preds_mean = tf.concat(preds_mean, axis=0)
         preds_std = tf.concat(preds_std, axis=0)
 
@@ -613,12 +631,18 @@ class VariationalPeakModel():
         Returns:
             3-dimensional numpy matrix of predictions: sized (samples by regions by ChIP-seq targets)
         """
-
+        print("in function")
+        s = time.time_ns()
         if all_data is None:
             all_data = concatenate_all_data(self.data, self.regionsFile)
+        e = time.time_ns()
+        print('concat: %i' % (e-s))
 
+        s = time.time_ns()
         regions_bed = bed2Pyranges(regions_peak_file)
         all_data_regions = bed2Pyranges(self.regionsFile)
+        e = time.time_ns()
+        print('bed2pyranges: %i' % (e - s))
 
         joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
 
@@ -627,30 +651,26 @@ class VariationalPeakModel():
 
         results_tmp = []
 
+        s = time.time_ns()
         # TODO 9/10/2020: should do something more efficiently than a for loop
-        # @ray.remote
-        def ev(sample_i):
+        # Wrap this for loop in a function
+        for sample_i in range(accessilibility_peak_matrix.shape[0]):
             # tuple of means and stds
             peaks_i = np.zeros((len(all_data_regions)))
             peaks_i[idx] = accessilibility_peak_matrix[sample_i, joined['idx']]
 
-            means, _ = self.eval_vector(all_data, peaks_i, idx)
-            # means = 0
+            # means, _ = self.eval_vector(all_data, peaks_i, idx)
 
             # group means by joined['idx']
-            return means
+            results_tmp.append(self.eval_vector_2(all_data, peaks_i, idx))
         
-        # for sample_i in range(accessilibility_peak_matrix.shape[0]):
-        #     results_tmp.append(ev.remote(sample_i))
-        # results = ray.get(results_tmp)
-
-        # p = multiprocessing.Pool()
-        # result = p.map(ev, range(accessilibility_peak_matrix.shape[0]))
-
-        # results = Parallel(n_jobs=4)(delayed(ev)(sample_i) for sample_i in range(accessilibility_peak_matrix.shape[0]))
-
+        results = results_tmp
+        
+        e = time.time_ns()
+        print("total eval_vector time: %i" % (e - s))
 
         # stack all samples along 0th axis
+        s = time.time_ns()
         tmp = np.stack(results)
 
         # get the index break for each region_bed region
@@ -670,6 +690,8 @@ class VariationalPeakModel():
         # fill missing indices with nans
         missing_indices = joined[joined['idx_alldata']==-1]['idx'].values
         final[:,missing_indices, :] = np.NAN
+        e = time.time_ns()
+        print('the rest: %i' % (e - s))
 
         return final
 
@@ -821,44 +843,20 @@ class VLP(VariationalPeakModel):
         model = tf.keras.models.Model(inputs=cell_inputs, outputs=outputs)
         return model
 
+
 if __name__ == '__main__':
-    accessilibility_peak_matrix = np.random.rand(2, 2)
+    x = np.random.rand(25, 30_000)
+    # vlps = [VLP.remote(['CEBPB'], test_celltypes=['K562']) for _ in range(4)]
+    # VLPActor = VLP.remote(['CEBPB'], test_celltypes=['K562'])
     
-
-    def ev(sample_i):
-        regions_peak_file = os.getcwd() + '/data/test_regions.bed'
-        model = VLP(['CEBPB'], test_celltypes=['K562'])
-
-        regions_bed = bed2Pyranges(regions_peak_file)
-        all_data_regions = bed2Pyranges(model.regionsFile)
-        joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
-        idx = joined['idx_alldata']
-        all_data = concatenate_all_data(model.data, model.regionsFile)
-        # tuple of means and stds
-        peaks_i = np.zeros((len(all_data_regions)))
-        peaks_i[idx] = accessilibility_peak_matrix[sample_i, joined['idx']]
-        print("eval vector call")
-        means, _ = VLP.eval_vector(model, all_data, peaks_i, idx)
-        # means = 0
-
-        # group means by joined['idx']
-        return means
+    # result = VLPActor.score_matrix.remote(x, 'data/test_regions.bed', all_data = None)
+    # ray.get(results)
     
-    # results = Parallel(n_jobs=4)(delayed(ev)(sample_i) for sample_i in range(accessilibility_peak_matrix.shape[0]))
-    
-    lock = multiprocessing.Lock()
-    p = multiprocessing.Pool()
-    print('before call')
-    result = p.map(ev, range(accessilibility_peak_matrix.shape[0]))
+    # results = ray.get([v.score_matrix.remote(x, 'data/test_regions.bed', all_data = None) for v in vlps])
 
-    # results = []
-    # for sample_i in range(accessilibility_peak_matrix.shape[0]):
-    #     results.append(ev(sample_i))
-    
-    # print(results)
+    model = VLP(['CEBPB'], test_celltypes=['K562'])
+    # score_matrix_2(model, x, 'data/test_regions.bed', all_data = None)
 
-    # results = model.score_matrix(x, os.getcwd() + '/data/test_regions.bed', all_data = None)
-    # from joblib import Parallel, delayed
-    # def multiple(a, b):
-    #         return a*b
-    # Parallel(n_jobs=2)(delayed(multiple)(a=i, b=j) for i in range(1, 6) for j in range(11, 16)) 
+    x = model.score_matrix(x, 'data/test_regions.bed', all_data = None)
+
+    print(x)
