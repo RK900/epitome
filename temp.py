@@ -16,10 +16,11 @@ def gen():
 
 class A:
     def __init__(self):
-        pass
+        model = VLP(['CEBPB'], test_celltypes=['K562'])
+        self.model = model
 
 
-    def func2(self, num, all_data, all_data_regions, model, idx, joined):
+    def func2(self, num, all_data, all_data_regions, model, idx, joined, accessilibility_peak_matrix):
         peaks_i = np.zeros((len(all_data_regions)))
         peaks_i[idx] = accessilibility_peak_matrix[num, joined['idx']]
         load_bs = generators.load_data(all_data,
@@ -50,7 +51,7 @@ class A:
             print('in loop')
         return 2 * num
 
-    def func1(self, num):
+    def func1(self, num, accessilibility_peak_matrix):
         regions_peak_file = os.getcwd() + '/data/test_regions.bed'
         model = VLP(['CEBPB'], test_celltypes=['K562'])
 
@@ -61,20 +62,36 @@ class A:
         all_data = functions.concatenate_all_data(model.data, model.regionsFile)
 
         arg = num
-        answer = self.func2(arg, all_data, all_data_regions, model, idx, joined)
+        answer = self.func2(arg, all_data, all_data_regions, model, idx, joined,accessilibility_peak_matrix)
 
         return answer
+    
+    def score_matrix(self):
+        # eeeeeeeeeeeee
+        accessilibility_peak_matrix = np.random.rand(2, 10)
+        processes = []
+        for i in range(accessilibility_peak_matrix.shape[0]): # accessibility matrix shape[0]
+            p = multiprocessing.Process(target=A.func1, args=(self, i, ))
+            p.start()
+        # print('before call')
+        # result = p.map(A.func1, range(accessilibility_peak_matrix.shape[0]))
+        for p in processes:
+            p.join()
+
+
 
 if __name__ == '__main__':
+    a = A()
+    a.score_matrix()
+
     accessilibility_peak_matrix = np.random.rand(10, 10)
     processes = []
-    for i in range(2):
-        
-        a = A()
+    for i in range(2): # accessibility matrix shape[0]
+        # a = A()
         p = multiprocessing.Process(target=A.func1, args=(a, i))
         p.start()
-    # print('before call')
-    # result = p.map(A.func1, range(accessilibility_peak_matrix.shape[0]))
+    # # print('before call')
+    # # result = p.map(A.func1, range(accessilibility_peak_matrix.shape[0]))
     for p in processes:
         p.join()
     # print(result)
