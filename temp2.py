@@ -49,7 +49,7 @@ class A:
         # dataset = dataset.repeat()
         # dataset = dataset.prefetch(model.prefetch_size)
         print('before loop')
-        for i in v.take(2):
+        for f in v.take(2):
             print('in loop')
         return 2 * num
 
@@ -88,6 +88,11 @@ if __name__ == '__main__':
 
     args = [1,2]
 
-    futures = [handle.remote(i) for i in args]
+    # futures = [handle.remote(i) for i in args]
+    futures = []
+    for i in args:
+        j = i + 1
+        futures.append(handle.remote(j))
+    
     result = ray.get(futures)
     print(result)

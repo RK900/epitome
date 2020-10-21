@@ -480,7 +480,7 @@ class VariationalPeakModel():
             truth.append(truth_b)
             sample_weight.append(weights_b)
         
-        lock.release()
+        # lock.release()
 
         preds_mean = tf.concat(preds_mean, axis=0)
         preds_std = tf.concat(preds_std, axis=0)
