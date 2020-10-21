@@ -56,15 +56,15 @@ class A:
     @serve.accept_batch
     def __call__(self, requests):
         for req in requests:
-            regions_peak_file = os.getcwd() + '/data/test_regions.bed'
-            regions_bed = functions.bed2Pyranges(regions_peak_file)
-            all_data_regions = functions.bed2Pyranges(self.model.regionsFile)
-            joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
-            idx = joined['idx_alldata']
-            all_data = functions.concatenate_all_data(self.model.data, self.model.regionsFile)
+            # regions_peak_file = os.getcwd() + '/data/test_regions.bed'
+            # regions_bed = functions.bed2Pyranges(regions_peak_file)
+            # all_data_regions = functions.bed2Pyranges(self.model.regionsFile)
+            # joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
+            # idx = joined['idx_alldata']
+            # all_data = functions.concatenate_all_data(self.model.data, self.model.regionsFile)
             print(req.data) # test if method is entered
-            arg = 42
-            answer = self.func2(arg, all_data, all_data_regions, idx, joined)
+            # arg = 42
+            # answer = self.func2(arg, all_data, all_data_regions, idx, joined)
             return [42]
 
             
@@ -86,13 +86,13 @@ if __name__ == '__main__':
     client.create_endpoint("tf", backend="tf")
     handle = client.get_handle("tf")
 
-    args = [1,2]
+    args = [(1, 1), (2, 2)]
 
     # futures = [handle.remote(i) for i in args]
     futures = []
     for i in args:
-        j = i + 1
-        futures.append(handle.remote(j))
+        # j = i + 1
+        futures.append(handle.remote(i))
     
     result = ray.get(futures)
     print(result)
