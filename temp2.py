@@ -12,11 +12,46 @@ import os
 
 import itertools
 
+def gen():
+    for i in itertools.count(10):
+        yield (i, [1] * i)
+
 class A:
     def __init__(self):
         model = VLP(['CEBPB'], test_celltypes=['K562'])
         self.model = model
         self.accessilibility_peak_matrix = np.random.rand(4, 10)
+    
+    def func2(self, num, all_data, all_data_regions, idx, joined):
+        peaks_i = np.zeros((len(all_data_regions)))
+        peaks_i[idx] = self.accessilibility_peak_matrix[0, joined['idx']]
+        load_bs = generators.load_data(all_data,
+                    self.model.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
+                    self.model.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
+                    self.model.matrix,
+                    self.model.assaymap,
+                    self.model.cellmap,
+                    radii = self.model.radii,
+                    mode = Dataset.RUNTIME,
+                    similarity_matrix = peaks_i,
+                    similarity_assays = self.model.similarity_assays,
+                    indices = idx)
+        print('done loading')
+        input_shapes, output_shape, v = generators.generator_to_tf_dataset(load_bs, self.model.batch_size, 1, self.model.prefetch_size)
+        print('done generating')
+        dataset = tf.data.Dataset.range(4)
+        dataset = tf.data.Dataset.from_generator(
+        gen,
+        (tf.int64, tf.int64),
+        (tf.TensorShape([]), tf.TensorShape([None])))
+        # dataset = dataset.batch(model.batch_size)
+        # dataset = dataset.shuffle(model.shuffle_size)
+        # dataset = dataset.repeat()
+        # dataset = dataset.prefetch(model.prefetch_size)
+        print('before loop')
+        for i in v.take(2):
+            print('in loop')
+        return 2 * num
 
     @serve.accept_batch
     def __call__(self, requests):
@@ -28,6 +63,8 @@ class A:
             idx = joined['idx_alldata']
             all_data = functions.concatenate_all_data(self.model.data, self.model.regionsFile)
             print(req.data) # test if method is entered
+            arg = 42
+            answer = self.func2(arg, all_data, all_data_regions, idx, joined)
             return [42]
 
             
