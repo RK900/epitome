@@ -55,44 +55,50 @@ class A:
 
     @serve.accept_batch
     def __call__(self, requests):
+        all_data_regions = functions.bed2Pyranges(self.model.regionsFile)
         for req in requests:
-            regions_peak_file = os.getcwd() + '/data/test_regions.bed'
+            regions_peak_file = req.data[1]
             regions_bed = functions.bed2Pyranges(regions_peak_file)
-            all_data_regions = functions.bed2Pyranges(self.model.regionsFile)
-            # joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
-            # idx = joined['idx_alldata']
-            # all_data = functions.concatenate_all_data(self.model.data, self.model.regionsFile)
-            print(req.data[1]) # test if method is entered
+            
+            joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
+            idx = joined['idx_alldata']
+            all_data = functions.concatenate_all_data(self.model.data, self.model.regionsFile)
+            # print(req.data[1]) # test if method is entered
             arg = 42
-            # answer = self.func2(arg, all_data, all_data_regions, idx, joined)
+            answer = self.func2(arg, all_data, all_data_regions, idx, joined)
             return [42]
 
             
         
         # do stuff, serve model
+    
+    def score_matrix(self, x, y):
+        client = serve.start()
+        client.create_backend("tf", A,
+            # configure resources
+            ray_actor_options={"num_cpus": 2},
+            # configure replicas
+            config={
+                "num_replicas": 2, 
+                "max_batch_size": 24,
+                "batch_wait_timeout": 0.1
+            }
+        )
+        client.create_endpoint("tf", backend="tf")
+        handle = client.get_handle("tf")
+
+        regions_peak_file = os.getcwd() + '/data/test_regions.bed'
+        args = [(1, regions_peak_file), (2, regions_peak_file)]
+
+        # futures = [handle.remote(i) for i in args]
+        futures = []
+        for i in args:
+            # j = i + 1
+            futures.append(handle.remote(i))
+        
+        result = ray.get(futures)
+        return result
 
 if __name__ == '__main__':
-    client = serve.start()
-    client.create_backend("tf", A,
-        # configure resources
-        ray_actor_options={"num_cpus": 2},
-        # configure replicas
-        config={
-            "num_replicas": 2, 
-            "max_batch_size": 24,
-            "batch_wait_timeout": 0.1
-        }
-    )
-    client.create_endpoint("tf", backend="tf")
-    handle = client.get_handle("tf")
-
-    args = [(1, 'asdasda'), (2, 'sdfsdfsd')]
-
-    # futures = [handle.remote(i) for i in args]
-    futures = []
-    for i in args:
-        # j = i + 1
-        futures.append(handle.remote(i))
-    
-    result = ray.get(futures)
-    print(result)
+    a = A()
+    print(a.score_matrix(1, 2))

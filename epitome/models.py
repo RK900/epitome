@@ -29,6 +29,9 @@ import logging
 import pickle
 from operator import itemgetter
 
+import ray
+from ray import serve
+
 #######################################################################
 #################### Variational Peak Model ###########################
 #######################################################################
@@ -368,6 +371,40 @@ class VariationalPeakModel():
         results = self.run_predictions(num_samples, ds, calculate_metrics = False)
 
         return results['preds_mean'], results['preds_std']
+    
+    def __call__(self, requests):
+        """
+        Evaluates a new cell type based on its chromatin (DNase or ATAC-seq) vector, as well
+        as any other similarity assays (acetylation, methylation, etc.). len(vector) should equal
+        the data.shape[1]
+        :param data: data to build features from
+        :param matrix: matrix of 0s/1s, where # rows match # similarity assays in model
+        :param indices: indices of vector to actually score. You need all of the locations for the generator.
+
+        :return predictions for all factors
+        """
+
+        for req in requests:
+            data = req.data[0]
+            matrix = req.data[1]
+            indices = req.data[2]
+            input_shapes, output_shape, ds = generator_to_tf_dataset(load_data(data,
+                    self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
+                    self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
+                    self.matrix,
+                    self.assaymap,
+                    self.cellmap,
+                    radii = self.radii,
+                    mode = Dataset.RUNTIME,
+                    similarity_matrix = matrix,
+                    similarity_assays = self.similarity_assays,
+                    indices = indices), self.batch_size, 1, self.prefetch_size)
+
+            num_samples = len(indices)
+
+            results = self.run_predictions(num_samples, ds, calculate_metrics = False)
+
+            return [results['preds_mean']]
 
 
     def _predict(self, numpy_matrix):
@@ -582,6 +619,20 @@ class VariationalPeakModel():
             3-dimensional numpy matrix of predictions: sized (samples by regions by ChIP-seq targets)
         """
 
+        client = serve.start()
+        client.create_backend("tf", VariationalPeakModel,
+            # configure resources
+            ray_actor_options={"num_cpus": 4},
+            # configure replicas
+            config={
+                "num_replicas": 2, 
+                "max_batch_size": 24,
+                "batch_wait_timeout": 0.1
+            }
+        )
+        client.create_endpoint("tf", backend="tf")
+        handle = client.get_handle("tf")
+
         if all_data is None:
             all_data = concatenate_all_data(self.data, self.regionsFile)
 
@@ -594,18 +645,19 @@ class VariationalPeakModel():
         idx = joined['idx_alldata']
 
         results = []
+        futures = []
 
         # TODO 9/10/2020: should do something more efficiently than a for loop
         for sample_i in range(accessilibility_peak_matrix.shape[0]):
             # tuple of means and stds
             peaks_i = np.zeros((len(all_data_regions)))
             peaks_i[idx] = accessilibility_peak_matrix[sample_i, joined['idx']]
+            # means, _ = self.eval_vector(all_data, peaks_i, idx)
+            # results.append(means)
 
-            means, _ = self.eval_vector(all_data, peaks_i, idx)
+            futures.append(handle.remote((all_data, peaks_i, idx)))
 
-            # group means by joined['idx']
-            results.append(means)
-
+        results = ray.get(futures)
         # stack all samples along 0th axis
         tmp = np.stack(results)
 
