@@ -60,7 +60,7 @@ class A(VLP):
             data = req.data[0]
             matrix = req.data[1]
             indices = req.data[2]
-            input_shapes, output_shape, ds = functions.generator_to_tf_dataset(generators.load_data(data,
+            input_shapes, output_shape, ds = generators.generator_to_tf_dataset(generators.load_data(data,
                     self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
                     self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
                     self.matrix,
@@ -148,7 +148,15 @@ class A(VLP):
         print(self.regionsFile)
 
 if __name__ == '__main__':
-    a = A(accessilibility_peak_matrix=np.random.rand(4, 10), regions_peak_file=os.getcwd() + '/data/test_regions.bed')
-    a.score_matrix()
+    apm = np.random.rand(4, 10)
+    rpf = os.getcwd() + '/data/test_regions.bed'
+    a = A(accessilibility_peak_matrix=apm, regions_peak_file=rpf)
+    par_results = a.score_matrix()
+    print(par_results)
+
+    serial = VLP(assays=['CEBPB'], test_celltypes=['K562'])
+    ser_results = serial.score_matrix(apm, rpf)
+    print(ser_results)
+    print(par_results == ser_results)
 
     # print(a.score_matrix(1, 2))
