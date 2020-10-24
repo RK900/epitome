@@ -131,7 +131,7 @@ class A(VLP):
         
         idx = joined['idx_alldata']
 
-        args = [(1, self.regions_peak_file), (2, self.regions_peak_file)]
+        # args = [(1, self.regions_peak_file), (2, self.regions_peak_file)]
 
         # # futures = [handle.remote(i) for i in args]
         futures = []
@@ -140,8 +140,31 @@ class A(VLP):
             peaks_i[idx] = self.accessilibility_peak_matrix[sample_i, joined['idx']]
             futures.append(handle.remote((all_data, peaks_i, idx)))
         
-        result = ray.get(futures)
-        return result
+        results = ray.get(futures)
+        # return result
+        tmp = np.stack(results)
+
+        # get the index break for each region_bed region
+        reduce_indices = joined.drop_duplicates('idx',keep='first').index.values
+
+        # get the number of times there was a scored region for each region_bed region
+        # used to calculate reduced means
+        indices_counts = joined['idx'].value_counts(sort=False).values[:,None]
+
+        # reduce means on middle axis
+        final = np.add.reduceat(tmp, reduce_indices, axis = 1)/indices_counts
+
+        # TODO 9/10/2020: code is currently scoring missing values and setting to nan.
+        # You could be more efficient and remove these so you are not taking
+        # the time to score garbage data.
+
+        # fill missing indices with nans
+        missing_indices = joined[joined['idx_alldata']==-1]['idx'].values
+        final[:,missing_indices, :] = np.NAN
+
+        return final
+
+
     
     def test(self):
         print(self.eval_vector)
