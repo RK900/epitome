@@ -55,25 +55,29 @@ class A(VLP):
         return 2
 
     @serve.accept_batch
-    def __call__(self, data, matrix, indices):
-        input_shapes, output_shape, ds = functions.generator_to_tf_dataset(generators.load_data(data,
-                 self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
-                 self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
-                 self.matrix,
-                 self.assaymap,
-                 self.cellmap,
-                 radii = self.radii,
-                 mode = Dataset.RUNTIME,
-                 similarity_matrix = matrix,
-                 similarity_assays = self.similarity_assays,
-                 indices = indices), self.batch_size, 1, self.prefetch_size)
+    def __call__(self, requests):
+        for req in requests:
+            data = req.data[0]
+            matrix = req.data[1]
+            indices = req.data[2]
+            input_shapes, output_shape, ds = functions.generator_to_tf_dataset(generators.load_data(data,
+                    self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
+                    self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
+                    self.matrix,
+                    self.assaymap,
+                    self.cellmap,
+                    radii = self.radii,
+                    mode = Dataset.RUNTIME,
+                    similarity_matrix = matrix,
+                    similarity_assays = self.similarity_assays,
+                    indices = indices), self.batch_size, 1, self.prefetch_size)
 
-        num_samples = len(indices)
+            num_samples = len(indices)
 
-        # results = self.run_predictions(num_samples, ds, calculate_metrics = False)
+            results = self.run_predictions(num_samples, ds, calculate_metrics = False)
 
-        # return [results['preds_mean']]
-        return [69]
+            return [results['preds_mean']]
+        # return [69]
 
     # @serve.accept_batch
     def old_call(self, requests):
