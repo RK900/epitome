@@ -180,6 +180,8 @@ if __name__ == '__main__':
     serial = VLP(assays=['CEBPB'], test_celltypes=['K562'])
     ser_results = serial.score_matrix(apm, rpf)
     print(ser_results)
+    sr2 = serial.score_matrix(apm, rpf)
     print(par_results == ser_results)
+    print(ser_results == sr2)
 
     # print(a.score_matrix(1, 2))
