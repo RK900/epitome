@@ -99,7 +99,7 @@ class A(VLP):
         client.create_backend("tf", A,
             # init args
             self.accessilibility_peak_matrix,
-            self.regions_peak_file, 
+            self.regions_peak_file,
             # configure resources
             ray_actor_options={"num_cpus": 2},
             # configure replicas
