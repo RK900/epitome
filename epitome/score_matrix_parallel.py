@@ -4,10 +4,10 @@ import tensorflow as tf
 import numpy as np
 from tqdm import tqdm
 
-import epitome.generators as generators
-import epitome.functions as functions
-from epitome.constants import *
-from epitome.models import VLP
+import .generators as generators
+import .functions as functions
+from .constants import *
+from .models import VLP
 from epitome import *
 
 import os
