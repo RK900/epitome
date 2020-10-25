@@ -5,9 +5,9 @@ import numpy as np
 from tqdm import tqdm
 
 from epitome import *
-from epitome.functions import *
+import epitome.functions as functions
 from epitome.constants import *
-from epitome.generators import *
+import epitome.generators as generators
 from epitome.models import VLP
 
 import os
@@ -22,7 +22,7 @@ class ScoreMatrix_Runner(VLP):
             data = req.data[0]
             matrix = req.data[1]
             indices = req.data[2]
-            input_shapes, output_shape, ds = generator_to_tf_dataset(generators.load_data(data,
+            input_shapes, output_shape, ds = generators.generator_to_tf_dataset(generators.load_data(data,
                     self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
                     self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
                     self.matrix,
@@ -42,10 +42,7 @@ class ScoreMatrix_Runner(VLP):
     
     def score_matrix(self, accessilibility_peak_matrix, regions_peak_file, regions_indices = None, all_data = None):
         client = serve.start()
-        client.create_backend("tf", A,
-            # init args
-            accessilibility_peak_matrix,
-            regions_peak_file,
+        client.create_backend("tf", ScoreMatrix_Runner,
             # configure resources
             ray_actor_options={"num_cpus": 2},
             # configure replicas
@@ -106,8 +103,7 @@ class ScoreMatrix_Runner(VLP):
 
 if __name__ == '__main__':
     apm = np.random.rand(4, 10)
-    os.chdir('..')
-    rpf = os.getcwd() + '/data/test_regions.bed'
+    rpf = os.getcwd() + '/runners/test_regions.bed'
     a = ScoreMatrix_Runner()
     par_results = a.score_matrix(accessilibility_peak_matrix=apm, regions_peak_file=rpf)
     print(par_results)
