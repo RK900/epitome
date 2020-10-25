@@ -4,11 +4,11 @@ import tensorflow as tf
 import numpy as np
 from tqdm import tqdm
 
-import .generators as generators
-import .functions as functions
-from .constants import *
-from .models import VLP
 from epitome import *
+from epitome.functions import *
+from epitome.constants import *
+from epitome.generators import *
+from epitome.models import VLP
 
 import os
 
@@ -22,7 +22,7 @@ class ScoreMatrix_Runner(VLP):
             data = req.data[0]
             matrix = req.data[1]
             indices = req.data[2]
-            input_shapes, output_shape, ds = generators.generator_to_tf_dataset(generators.load_data(data,
+            input_shapes, output_shape, ds = generator_to_tf_dataset(generators.load_data(data,
                     self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
                     self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
                     self.matrix,
@@ -44,8 +44,8 @@ class ScoreMatrix_Runner(VLP):
         client = serve.start()
         client.create_backend("tf", A,
             # init args
-            self.accessilibility_peak_matrix,
-            self.regions_peak_file,
+            accessilibility_peak_matrix,
+            regions_peak_file,
             # configure resources
             ray_actor_options={"num_cpus": 2},
             # configure replicas
@@ -61,7 +61,7 @@ class ScoreMatrix_Runner(VLP):
         if all_data is None:
             all_data = functions.concatenate_all_data(self.data, self.regionsFile)
 
-        regions_bed = functions.bed2Pyranges(self.regions_peak_file)
+        regions_bed = functions.bed2Pyranges(regions_peak_file)
         all_data_regions = functions.bed2Pyranges(self.regionsFile)
 
         joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
@@ -74,9 +74,9 @@ class ScoreMatrix_Runner(VLP):
         idx = joined['idx_alldata']
 
         futures = []
-        for sample_i in tqdm(range(self.accessilibility_peak_matrix.shape[0])):
+        for sample_i in tqdm(range(accessilibility_peak_matrix.shape[0])):
             peaks_i = np.zeros((len(all_data_regions)))
-            peaks_i[idx] = self.accessilibility_peak_matrix[sample_i, joined['idx']]
+            peaks_i[idx] = accessilibility_peak_matrix[sample_i, joined['idx']]
             futures.append(handle.remote((all_data, peaks_i, idx)))
         
         results = ray.get(futures)
