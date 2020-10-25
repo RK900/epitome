@@ -13,8 +13,8 @@ from epitome.models import VLP
 import os
 
 class ScoreMatrix_Runner(VLP):
-    def __init__(self, assays, test_celltypes):
-        VLP.__init__(self, assays=assays, test_celltypes=test_celltypes)
+    def __init__(self):
+        VLP.__init__(self, assays=['CEBPB'], test_celltypes=['K562'])
 
     @serve.accept_batch
     def __call__(self, requests):
@@ -108,7 +108,7 @@ if __name__ == '__main__':
     apm = np.random.rand(4, 10)
     os.chdir('..')
     rpf = os.getcwd() + '/data/test_regions.bed'
-    a = ScoreMatrix_Runner(assays=['CEBPB'], test_celltypes=['K562'])
+    a = ScoreMatrix_Runner()
     par_results = a.score_matrix(accessilibility_peak_matrix=apm, regions_peak_file=rpf)
     print(par_results)
 
