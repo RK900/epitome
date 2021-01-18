@@ -371,6 +371,21 @@ class VariationalPeakModel():
         return results['preds_mean'], results['preds_std']
 
 
+    @tf.function(experimental_relax_shapes=True)
+    def predict_step_2(self, inputs):
+
+        # get the shapes for the cell type specific features.
+        # they are not even, because some cells have missing data.
+        cell_lens = [i.shape[-1] for i in self.train_iter.element_spec[:-2]]
+
+        # split matrix inputs into tuple of cell line specific features
+        split_inputs = tf.split(tf.dtypes.cast(inputs, tf.float32), cell_lens, axis=1)
+
+        # predict
+        tmp = self.model(split_inputs)
+        y_pred = tf.sigmoid(tmp)
+        return y_pred
+
     def _predict(self, numpy_matrix):
         """
         Run predictions on a numpy matrix. Size of numpy_matrix should be # examples by features.
@@ -380,22 +395,34 @@ class VariationalPeakModel():
 
         inv_assaymap = {v: k for k, v in self.assaymap.items()}
 
-        @tf.function
-        def predict_step(inputs):
+        # @tf.function
+        # def predict_step(inputs):
 
-            # get the shapes for the cell type specific features.
-            # they are not even, because some cells have missing data.
-            cell_lens = [i.shape[-1] for i in self.train_iter.element_spec[:-2]]
+        #     # get the shapes for the cell type specific features.
+        #     # they are not even, because some cells have missing data.
+        #     cell_lens = [i.shape[-1] for i in self.train_iter.element_spec[:-2]]
 
-            # split matrix inputs into tuple of cell line specific features
-            split_inputs = tf.split(tf.dtypes.cast(inputs, tf.float32), cell_lens, axis=1)
+        #     # split matrix inputs into tuple of cell line specific features
+        #     split_inputs = tf.split(tf.dtypes.cast(inputs, tf.float32), cell_lens, axis=1)
 
-            # predict
-            tmp = self.model(split_inputs)
-            y_pred = tf.sigmoid(tmp)
-            return y_pred
+        #     # predict
+        #     tmp = self.model(split_inputs)
+        #     y_pred = tf.sigmoid(tmp)
+        #     return y_pred
 
-        return predict_step(numpy_matrix)
+        return predict_step_2(numpy_matrix)
+
+    @tf.function(experimental_relax_shapes=True)
+    def predict_step(self, inputs_b, samples):
+
+        # sample n times by tiling batch by rows, running
+        # predictions for each row
+        inputs_tiled = [tf.tile(i, (samples, 1)) for i in inputs_b]
+        tmp = self.model(inputs_tiled)
+        y_pred = tf.sigmoid(tmp)
+        # split up batches into a third dimension and stack them in third dimension
+        preds = tf.stack(tf.split(y_pred, samples, axis=0), axis=0)
+        return tf.math.reduce_mean(preds, axis=0), tf.math.reduce_std(preds, axis=0)
 
     def run_predictions(self, num_samples, iter_, calculate_metrics = True, samples = 50):
         """
@@ -423,17 +450,17 @@ class VariationalPeakModel():
         preds_std = []
         sample_weight = []
 
-        @tf.function
-        def predict_step(inputs_b):
+        # @tf.function
+        # def predict_step(inputs_b):
 
-            # sample n times by tiling batch by rows, running
-            # predictions for each row
-            inputs_tiled = [tf.tile(i, (samples, 1)) for i in inputs_b]
-            tmp = self.model(inputs_tiled)
-            y_pred = tf.sigmoid(tmp)
-            # split up batches into a third dimension and stack them in third dimension
-            preds = tf.stack(tf.split(y_pred, samples, axis=0), axis=0)
-            return tf.math.reduce_mean(preds, axis=0), tf.math.reduce_std(preds, axis=0)
+        #     # sample n times by tiling batch by rows, running
+        #     # predictions for each row
+        #     inputs_tiled = [tf.tile(i, (samples, 1)) for i in inputs_b]
+        #     tmp = self.model(inputs_tiled)
+        #     y_pred = tf.sigmoid(tmp)
+        #     # split up batches into a third dimension and stack them in third dimension
+        #     preds = tf.stack(tf.split(y_pred, samples, axis=0), axis=0)
+        #     return tf.math.reduce_mean(preds, axis=0), tf.math.reduce_std(preds, axis=0)
 
         for f in tqdm.tqdm(iter_.take(batches)):
             inputs_b = f[:-2]
@@ -443,7 +470,7 @@ class VariationalPeakModel():
             # getting y_preds. You can then calculate the mean and sigma of the predictions,
             # and use this to gather uncertainty: (see http://krasserm.github.io/2019/03/14/bayesian-neural-networks/)
             # inputs, truth, sample_weight
-            preds_mean_b, preds_std_b = predict_step(inputs_b)
+            preds_mean_b, preds_std_b = self.predict_step(inputs_b, samples)
 
             preds_mean.append(preds_mean_b)
             preds_std.append(preds_std_b)

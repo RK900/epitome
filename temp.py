@@ -13,6 +13,14 @@ from epitome import *
 import os
 
 import itertools
+import psutil
+import gc
+
+# ray.init(object_store_memory=10**9 * 2)
+
+def auto_garbage_collect(pct=50.0):
+    if psutil.virtual_memory().percent >= pct:
+        gc.collect()
 
 def gen():
     for i in itertools.count(10):
@@ -24,6 +32,7 @@ class A(VLP):
         # self.model = model
         self.accessilibility_peak_matrix = accessilibility_peak_matrix
         self.regions_peak_file = regions_peak_file
+        self.all_data = functions.concatenate_all_data(self.data, self.regionsFile)
 
     
     def func2(self, data, matrix, indices, samples = 50):
@@ -54,29 +63,29 @@ class A(VLP):
             print('in loop')
         return 2
 
-    @serve.accept_batch
-    def __call__(self, requests):
-        for req in requests:
-            data = req.data[0]
-            matrix = req.data[1]
-            indices = req.data[2]
-            input_shapes, output_shape, ds = generators.generator_to_tf_dataset(generators.load_data(data,
-                    self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
-                    self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
-                    self.matrix,
-                    self.assaymap,
-                    self.cellmap,
-                    radii = self.radii,
-                    mode = Dataset.RUNTIME,
-                    similarity_matrix = matrix,
-                    similarity_assays = self.similarity_assays,
-                    indices = indices), self.batch_size, 1, self.prefetch_size)
+    # @serve.accept_batch
+    def __call__(self, req):
+        data = self.all_data
+        matrix = req.data[0]
+        indices = req.data[1]
+        input_shapes, output_shape, ds = generators.generator_to_tf_dataset(generators.load_data(data,
+                self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
+                self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
+                self.matrix,
+                self.assaymap,
+                self.cellmap,
+                radii = self.radii,
+                mode = Dataset.RUNTIME,
+                similarity_matrix = matrix,
+                similarity_assays = self.similarity_assays,
+                indices = indices), self.batch_size, 1, self.prefetch_size)
 
-            num_samples = len(indices)
+        num_samples = len(indices)
+        auto_garbage_collect()
+        results = self.run_predictions(num_samples, ds, calculate_metrics = False)
+        auto_garbage_collect()
 
-            results = self.run_predictions(num_samples, ds, calculate_metrics = False)
-
-            return [results['preds_mean']]
+        return [results['preds_mean']]
         # return [69]
 
     # @serve.accept_batch
@@ -99,22 +108,22 @@ class A(VLP):
         # do stuff, serve model
     
     def score_matrix(self, regions_indices = None, all_data = None):
-        client = serve.start()
+        client = serve.start(detached=False)
         client.create_backend("tf", A,
             # init args
             self.accessilibility_peak_matrix,
             self.regions_peak_file,
             # configure resources
-            ray_actor_options={"num_cpus": 2},
-            # configure replicas
-            config={
-                "num_replicas": 2, 
-                "max_batch_size": 24,
-                "batch_wait_timeout": 0.1
-            }
+            # ray_actor_options={"num_cpus": 2},
+            # # configure replicas
+            # config={
+            #     "num_replicas": 2, 
+            #     "max_batch_size": 24,
+            #     "batch_wait_timeout": 0.5
+            # }
         )
-        client.create_endpoint("tf", backend="tf")
-        handle = client.get_handle("tf")
+        client.create_endpoint("my_endpoint", backend="tf", route="/a")
+        handle = client.get_handle("my_endpoint")
 
         if all_data is None:
             all_data = functions.concatenate_all_data(self.data, self.regionsFile)
@@ -135,13 +144,19 @@ class A(VLP):
 
         # # futures = [handle.remote(i) for i in args]
         futures = []
+        results = []
         for sample_i in tqdm(range(self.accessilibility_peak_matrix.shape[0])):
             peaks_i = np.zeros((len(all_data_regions)))
             peaks_i[idx] = self.accessilibility_peak_matrix[sample_i, joined['idx']]
-            futures.append(handle.remote((all_data, peaks_i, idx)))
+            value = handle.remote((peaks_i, idx))
+            futures += [value]
+            results.append(ray.get(futures))
+            auto_garbage_collect()
         
-        results = ray.get(futures)
+        # results = ray.get(futures)
         # return result
+        print(results)
+        print(results.shape)
         tmp = np.stack(results)
 
         # get the index break for each region_bed region
@@ -171,17 +186,18 @@ class A(VLP):
         print(self.regionsFile)
 
 if __name__ == '__main__':
-    apm = np.random.rand(4, 10)
+    apm = np.random.rand(40, 100)
     rpf = os.getcwd() + '/data/test_regions.bed'
     a = A(accessilibility_peak_matrix=apm, regions_peak_file=rpf)
+    gc.collect()
     par_results = a.score_matrix()
     print(par_results)
 
-    serial = VLP(assays=['CEBPB'], test_celltypes=['K562'])
-    ser_results = serial.score_matrix(apm, rpf)
-    print(ser_results)
-    sr2 = serial.score_matrix(apm, rpf)
-    print(par_results == ser_results)
-    print(ser_results == sr2)
+    # serial = VLP(assays=['CEBPB'], test_celltypes=['K562'])
+    # ser_results = serial.score_matrix(apm, rpf)
+    # print(ser_results)
+    # sr2 = serial.score_matrix(apm, rpf)
+    # print(par_results == ser_results)
+    # print(ser_results == sr2)
 
     # print(a.score_matrix(1, 2))
