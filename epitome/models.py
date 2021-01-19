@@ -412,8 +412,8 @@ class VariationalPeakModel():
 
         return predict_step_2(numpy_matrix)
 
-    @tf.function(experimental_relax_shapes=True)
-    def predict_step(self, inputs_b, samples):
+    # @tf.function(experimental_relax_shapes=True)
+    def predict_step_orig(self, inputs_b, samples):
 
         # sample n times by tiling batch by rows, running
         # predictions for each row
@@ -470,7 +470,7 @@ class VariationalPeakModel():
             # getting y_preds. You can then calculate the mean and sigma of the predictions,
             # and use this to gather uncertainty: (see http://krasserm.github.io/2019/03/14/bayesian-neural-networks/)
             # inputs, truth, sample_weight
-            preds_mean_b, preds_std_b = self.predict_step(inputs_b, samples)
+            preds_mean_b, preds_std_b = self.predict_step_orig(inputs_b, samples)
 
             preds_mean.append(preds_mean_b)
             preds_std.append(preds_std_b)

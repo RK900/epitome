@@ -16,7 +16,7 @@ import itertools
 import psutil
 import gc
 
-ray.init(_redis_max_memory=10**9)
+ray.init(num_cpus=24)
 
 def auto_garbage_collect(pct=50.0):
     if psutil.virtual_memory().percent >= pct:
@@ -26,9 +26,10 @@ def gen():
     for i in itertools.count(10):
         yield (i, [1] * i)
 
+@ray.remote
 class A(VLP):
     def __init__(self, accessilibility_peak_matrix, regions_peak_file):
-        VLP.__init__(self, assays=['CEBPB'], test_celltypes=['K562'])
+        VLP.__init__(self, assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'], test_celltypes=['K562'])
         # self.model = model
         self.accessilibility_peak_matrix = accessilibility_peak_matrix
         self.regions_peak_file = regions_peak_file
@@ -64,10 +65,10 @@ class A(VLP):
         return 2
 
     # @serve.accept_batch
-    def __call__(self, req):
+    def eval_vector(self, req):
         data = self.all_data
-        matrix = req.data[0]
-        indices = req.data[1]
+        matrix = req[0]
+        indices = req[1]
         input_shapes, output_shape, ds = generators.generator_to_tf_dataset(generators.load_data(data,
                 self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
                 self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
@@ -108,22 +109,6 @@ class A(VLP):
         # do stuff, serve model
     
     def score_matrix(self, regions_indices = None, all_data = None):
-        client = serve.start(detached=True)
-        client.create_backend("tf", A,
-            # init args
-            self.accessilibility_peak_matrix,
-            self.regions_peak_file,
-            # configure resources
-            # ray_actor_options={"num_cpus": 2},
-            # # configure replicas
-            # config={
-            #     "num_replicas": 2, 
-            #     "max_batch_size": 24,
-            #     "batch_wait_timeout": 0.5
-            # }
-        )
-        client.create_endpoint("my_endpoint", backend="tf", route="/a")
-        handle = client.get_handle("my_endpoint")
 
         if all_data is None:
             all_data = functions.concatenate_all_data(self.data, self.regionsFile)
@@ -150,10 +135,10 @@ class A(VLP):
             peaks_i[idx] = self.accessilibility_peak_matrix[sample_i, joined['idx']]
             value = handle.remote((peaks_i, idx))
             futures += [value]
-            # results.append(ray.get(futures))
-            # auto_garbage_collect()
+            results.append(ray.get(futures))
+            auto_garbage_collect()
         
-        results = ray.get(futures)
+        # results = ray.get(futures)
         # return result
         print(results)
         print(results.shape)
@@ -179,25 +164,74 @@ class A(VLP):
 
         return final
 
-
     
     def test(self):
         print(self.eval_vector)
         print(self.regionsFile)
 
 if __name__ == '__main__':
-    apm = np.random.rand(1000, 100000)
+    apm = np.random.rand(21, 100_000)
     rpf = os.getcwd() + '/data/test_regions.bed'
-    a = A(accessilibility_peak_matrix=apm, regions_peak_file=rpf)
-    gc.collect()
-    par_results = a.score_matrix()
-    print(par_results)
+    a = A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf)
+    metadata_class = VLP( assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'])
+    regionsFile = metadata_class.regionsFile
+    all_data = functions.concatenate_all_data(metadata_class.data, metadata_class.regionsFile)
+    # a.test.remote()
+    # t = ray.get(a.predict_step.remote((1, [1, 2, 3])))
 
-    # serial = VLP(assays=['CEBPB'], test_celltypes=['K562'])
-    # ser_results = serial.score_matrix(apm, rpf)
-    # print(ser_results)
-    # sr2 = serial.score_matrix(apm, rpf)
-    # print(par_results == ser_results)
-    # print(ser_results == sr2)
+    regions_bed = functions.bed2Pyranges(rpf)
+    all_data_regions = functions.bed2Pyranges(regionsFile)
 
-    # print(a.score_matrix(1, 2))
+    joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
+
+    # select regions with data to score
+    # if regions_indices is not None:
+    #     joined = joined[joined['idx'].isin(regions_indices)]
+    #     joined = joined.reset_index()
+    
+    idx = joined['idx_alldata']
+
+    # args = [(1, self.regions_peak_file), (2, self.regions_peak_file)]
+
+    # # futures = [handle.remote(i) for i in args]
+    futures = []
+    results = []
+    num_classes = 1
+    classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf) for i in range(num_classes)]
+
+    for sample_i in tqdm(range(apm.shape[0])):
+        peaks_i = np.zeros((len(all_data_regions)))
+        peaks_i[idx] = apm[sample_i, joined['idx']]
+        value = classes[sample_i % num_classes].eval_vector.remote((peaks_i, idx))
+        futures += [value]
+    
+    results = ray.get(futures)
+    # return result
+    # print(results)
+    # print(results[0].shape)
+    results = np.array(results)
+    print(results.shape)
+    results = results[:, 0, :, :]
+    tmp = np.stack(results)
+
+    # get the index break for each region_bed region
+    reduce_indices = joined.drop_duplicates('idx',keep='first').index.values
+
+    # get the number of times there was a scored region for each region_bed region
+    # used to calculate reduced means
+    indices_counts = joined['idx'].value_counts(sort=False).values[:,None]
+
+    # reduce means on middle axis
+    final = np.add.reduceat(tmp, reduce_indices, axis = 1)/indices_counts
+
+    # TODO 9/10/2020: code is currently scoring missing values and setting to nan.
+    # You could be more efficient and remove these so you are not taking
+    # the time to score garbage data.
+
+    # fill missing indices with nans
+    missing_indices = joined[joined['idx_alldata']==-1]['idx'].values
+    final[:,missing_indices, :] = np.NAN
+
+    print(final)
+    print(final.shape)
+    print('DONE')
