@@ -11,6 +11,7 @@ from epitome.models import VLP
 from epitome import *
 
 import os
+import copy
 
 import itertools
 import psutil
@@ -28,12 +29,12 @@ def gen():
 
 @ray.remote
 class A(VLP):
-    def __init__(self, accessilibility_peak_matrix, regions_peak_file):
+    def __init__(self, accessilibility_peak_matrix, regions_peak_file, all_data):
         VLP.__init__(self, assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'], test_celltypes=['K562'])
         # self.model = model
         self.accessilibility_peak_matrix = accessilibility_peak_matrix
         self.regions_peak_file = regions_peak_file
-        self.all_data = functions.concatenate_all_data(self.data, self.regionsFile)
+        self.all_data = all_data
 
     
     def func2(self, data, matrix, indices, samples = 50):
@@ -170,9 +171,14 @@ class A(VLP):
         print(self.regionsFile)
 
 if __name__ == '__main__':
-    apm = np.random.rand(21, 100_000)
+    apm = np.ones((105, 130_000))
     rpf = os.getcwd() + '/data/test_regions.bed'
-    a = A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf)
+
+    metadata_class = VLP( assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'])
+    regionsFile = metadata_class.regionsFile
+    all_data = functions.concatenate_all_data(metadata_class.data, metadata_class.regionsFile)
+
+    # a = A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data)
     metadata_class = VLP( assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'])
     regionsFile = metadata_class.regionsFile
     all_data = functions.concatenate_all_data(metadata_class.data, metadata_class.regionsFile)
@@ -196,21 +202,36 @@ if __name__ == '__main__':
     # # futures = [handle.remote(i) for i in args]
     futures = []
     results = []
-    num_classes = 1
-    classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf) for i in range(num_classes)]
+    num_classes = 10
+    classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
 
+    tmp_res = []
     for sample_i in tqdm(range(apm.shape[0])):
         peaks_i = np.zeros((len(all_data_regions)))
         peaks_i[idx] = apm[sample_i, joined['idx']]
         value = classes[sample_i % num_classes].eval_vector.remote((peaks_i, idx))
         futures += [value]
+        if sample_i % 100 == 0 and sample_i > 0:
+            print("Clearing object store")
+            tmp_res = ray.get(futures)
+            results.append(copy.deepcopy(tmp_res))
+            del futures
+            del value
+            del tmp_res
+            del classes
+            classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
+            futures = []
+            gc.collect()
     
-    results = ray.get(futures)
+    results.append(copy.deepcopy(ray.get(futures)))
     # return result
     # print(results)
     # print(results[0].shape)
     results = np.array(results)
     print(results.shape)
+    # print(results)
+    print(results[0].shape)
+    results = results[0]
     results = results[:, 0, :, :]
     tmp = np.stack(results)
 

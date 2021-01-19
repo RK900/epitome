@@ -412,7 +412,7 @@ class VariationalPeakModel():
 
         return predict_step_2(numpy_matrix)
 
-    # @tf.function(experimental_relax_shapes=True)
+    @tf.function(experimental_relax_shapes=True)
     def predict_step_orig(self, inputs_b, samples):
 
         # sample n times by tiling batch by rows, running
