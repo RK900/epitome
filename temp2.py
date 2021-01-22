@@ -171,7 +171,7 @@ class A(VLP):
         print(self.regionsFile)
 
 if __name__ == '__main__':
-    apm = np.ones((105, 130_000))
+    apm = np.ones((2350, 130_000))
     rpf = os.getcwd() + '/data/test_regions.bed'
 
     metadata_class = VLP( assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'])
@@ -202,7 +202,7 @@ if __name__ == '__main__':
     # # futures = [handle.remote(i) for i in args]
     futures = []
     results = []
-    num_classes = 10
+    num_classes = 5
     classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
 
     tmp_res = []
@@ -211,7 +211,7 @@ if __name__ == '__main__':
         peaks_i[idx] = apm[sample_i, joined['idx']]
         value = classes[sample_i % num_classes].eval_vector.remote((peaks_i, idx))
         futures += [value]
-        if sample_i % 100 == 0 and sample_i > 0:
+        if sample_i % 500 == 0 and sample_i > 0:
             print("Clearing object store")
             tmp_res = ray.get(futures)
             results.append(copy.deepcopy(tmp_res))
