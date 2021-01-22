@@ -17,7 +17,7 @@ import itertools
 import psutil
 import gc
 
-ray.init(num_cpus=24)
+ray.init()
 
 def auto_garbage_collect(pct=50.0):
     if psutil.virtual_memory().percent >= pct:
@@ -35,6 +35,7 @@ class A(VLP):
         self.accessilibility_peak_matrix = accessilibility_peak_matrix
         self.regions_peak_file = regions_peak_file
         self.all_data = all_data
+        assert all_data is not None
 
     
     def func2(self, data, matrix, indices, samples = 50):
@@ -109,7 +110,13 @@ class A(VLP):
         
         # do stuff, serve model
     
-    def score_matrix(self, regions_indices = None, all_data = None):
+    def score_matrix(self, req):
+        
+        regions_indices = req[0]
+        all_data = req[1]
+
+        num_classes = 10
+        classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
 
         if all_data is None:
             all_data = functions.concatenate_all_data(self.data, self.regionsFile)
@@ -134,15 +141,28 @@ class A(VLP):
         for sample_i in tqdm(range(self.accessilibility_peak_matrix.shape[0])):
             peaks_i = np.zeros((len(all_data_regions)))
             peaks_i[idx] = self.accessilibility_peak_matrix[sample_i, joined['idx']]
-            value = handle.remote((peaks_i, idx))
+            value = classes[sample_i % num_classes].eval_vector.remote((peaks_i, idx))
             futures += [value]
-            results.append(ray.get(futures))
-            auto_garbage_collect()
+            if sample_i % 100 == 0 and sample_i > 0:
+                print("Clearing object store")
+                tmp_res = ray.get(futures)
+                results.append(np.array(copy.deepcopy(tmp_res)))
+                del futures
+                del value
+                del tmp_res
+                del classes
+                classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
+                futures = []
+                gc.collect()
         
-        # results = ray.get(futures)
-        # return result
-        print(results)
+        results.append(np.array(copy.deepcopy(ray.get(futures))))
+
+        results = np.array(results)
         print(results.shape)
+        # print(results)
+        print(results[0].shape)
+        results = results[0]
+        results = results[:, 0, :, :]
         tmp = np.stack(results)
 
         # get the index break for each region_bed region
@@ -165,10 +185,7 @@ class A(VLP):
 
         return final
 
-    
-    def test(self):
-        print(self.eval_vector)
-        print(self.regionsFile)
+
 
 if __name__ == '__main__':
     apm = np.ones((105, 130_000))
@@ -178,81 +195,9 @@ if __name__ == '__main__':
     regionsFile = metadata_class.regionsFile
     all_data = functions.concatenate_all_data(metadata_class.data, metadata_class.regionsFile)
 
-    # a = A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data)
-    metadata_class = VLP( assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'])
-    regionsFile = metadata_class.regionsFile
-    all_data = functions.concatenate_all_data(metadata_class.data, metadata_class.regionsFile)
-    # a.test.remote()
-    # t = ray.get(a.predict_step.remote((1, [1, 2, 3])))
+    a = A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data)
+    res = ray.get(a.score_matrix.remote((None, all_data)))
 
-    regions_bed = functions.bed2Pyranges(rpf)
-    all_data_regions = functions.bed2Pyranges(regionsFile)
+    print(res)
 
-    joined = regions_bed.join(all_data_regions, how='left',suffix='_alldata').df
 
-    # select regions with data to score
-    # if regions_indices is not None:
-    #     joined = joined[joined['idx'].isin(regions_indices)]
-    #     joined = joined.reset_index()
-    
-    idx = joined['idx_alldata']
-
-    # args = [(1, self.regions_peak_file), (2, self.regions_peak_file)]
-
-    # # futures = [handle.remote(i) for i in args]
-    futures = []
-    results = []
-    num_classes = 10
-    classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
-
-    tmp_res = []
-    for sample_i in tqdm(range(apm.shape[0])):
-        peaks_i = np.zeros((len(all_data_regions)))
-        peaks_i[idx] = apm[sample_i, joined['idx']]
-        value = classes[sample_i % num_classes].eval_vector.remote((peaks_i, idx))
-        futures += [value]
-        if sample_i % 100 == 0 and sample_i > 0:
-            print("Clearing object store")
-            tmp_res = ray.get(futures)
-            results.append(copy.deepcopy(tmp_res))
-            del futures
-            del value
-            del tmp_res
-            del classes
-            classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
-            futures = []
-            gc.collect()
-    
-    results.append(copy.deepcopy(ray.get(futures)))
-    # return result
-    # print(results)
-    # print(results[0].shape)
-    results = np.array(results)
-    print(results.shape)
-    # print(results)
-    print(results[0].shape)
-    results = results[0]
-    results = results[:, 0, :, :]
-    tmp = np.stack(results)
-
-    # get the index break for each region_bed region
-    reduce_indices = joined.drop_duplicates('idx',keep='first').index.values
-
-    # get the number of times there was a scored region for each region_bed region
-    # used to calculate reduced means
-    indices_counts = joined['idx'].value_counts(sort=False).values[:,None]
-
-    # reduce means on middle axis
-    final = np.add.reduceat(tmp, reduce_indices, axis = 1)/indices_counts
-
-    # TODO 9/10/2020: code is currently scoring missing values and setting to nan.
-    # You could be more efficient and remove these so you are not taking
-    # the time to score garbage data.
-
-    # fill missing indices with nans
-    missing_indices = joined[joined['idx_alldata']==-1]['idx'].values
-    final[:,missing_indices, :] = np.NAN
-
-    print(final)
-    print(final.shape)
-    print('DONE')
