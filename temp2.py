@@ -17,7 +17,7 @@ import itertools
 import psutil
 import gc
 
-ray.init(num_cpus=24)
+ray.init(num_cpus=48)
 
 def auto_garbage_collect(pct=50.0):
     if psutil.virtual_memory().percent >= pct:
@@ -83,9 +83,9 @@ class A(VLP):
                 indices = indices), self.batch_size, 1, self.prefetch_size)
 
         num_samples = len(indices)
-        auto_garbage_collect()
+        # auto_garbage_collect()
         results = self.run_predictions(num_samples, ds, calculate_metrics = False)
-        auto_garbage_collect()
+        # auto_garbage_collect()
 
         return [results['preds_mean']]
         # return [69]
@@ -137,7 +137,7 @@ class A(VLP):
             value = handle.remote((peaks_i, idx))
             futures += [value]
             results.append(ray.get(futures))
-            auto_garbage_collect()
+            # auto_garbage_collect()
         
         # results = ray.get(futures)
         # return result
@@ -171,7 +171,7 @@ class A(VLP):
         print(self.regionsFile)
 
 if __name__ == '__main__':
-    apm = np.ones((2350, 130_000))
+    apm = np.ones((10_000, 130_000))
     rpf = os.getcwd() + '/data/test_regions.bed'
 
     metadata_class = VLP( assays=['CEBPB', "JUN", 'TCF7', 'CEBPZ'])
@@ -202,8 +202,9 @@ if __name__ == '__main__':
     # # futures = [handle.remote(i) for i in args]
     futures = []
     results = []
-    num_classes = 5
+    num_classes = 1
     classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
+    [c.train.remote(1000) for c in classes]
 
     tmp_res = []
     for sample_i in tqdm(range(apm.shape[0])):
@@ -211,27 +212,30 @@ if __name__ == '__main__':
         peaks_i[idx] = apm[sample_i, joined['idx']]
         value = classes[sample_i % num_classes].eval_vector.remote((peaks_i, idx))
         futures += [value]
-        if sample_i % 500 == 0 and sample_i > 0:
+        if sample_i % 1500 == 0 and sample_i > 0:
             print("Clearing object store")
             tmp_res = ray.get(futures)
-            results.append(copy.deepcopy(tmp_res))
+            results.extend(np.array(copy.deepcopy(tmp_res)))
             del futures
             del value
             del tmp_res
             del classes
             classes = [A.remote(accessilibility_peak_matrix=apm, regions_peak_file=rpf, all_data=all_data) for i in range(num_classes)]
+            [c.train.remote(1000) for c in classes]
             futures = []
-            gc.collect()
+            # gc.collect()
     
-    results.append(copy.deepcopy(ray.get(futures)))
+    results.extend(np.array(copy.deepcopy(ray.get(futures))))
     # return result
     # print(results)
     # print(results[0].shape)
     results = np.array(results)
+    # with open('parallel_matrix_2.npy', 'wb') as f:
+    #     np.save(f, results)
     print(results.shape)
     # print(results)
     print(results[0].shape)
-    results = results[0]
+
     results = results[:, 0, :, :]
     tmp = np.stack(results)
 
@@ -253,6 +257,6 @@ if __name__ == '__main__':
     missing_indices = joined[joined['idx_alldata']==-1]['idx'].values
     final[:,missing_indices, :] = np.NAN
 
-    print(final)
+    # print(final)
     print(final.shape)
     print('DONE')
