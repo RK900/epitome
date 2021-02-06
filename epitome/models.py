@@ -25,6 +25,8 @@ import numpy as np
 import tqdm
 import logging
 
+import time
+
 # for saving model
 import pickle
 from operator import itemgetter
@@ -309,6 +311,20 @@ class VariationalPeakModel():
                  similarity_matrix = matrix,
                  similarity_targets = self.dataset.similarity_targets,
                  indices = indices), self.batch_size, 1, self.prefetch_size)
+        
+        start = time.time()
+        timer = list(load_data(self.dataset.get_data(Dataset.ALL),
+                 self.test_celltypes,   # used for labels. Should be all for train/eval and subset for test
+                 self.eval_cell_types,   # used for rotating features. Should be all - test for train/eval
+                 self.matrix,
+                 self.assaymap,
+                 self.cellmap,
+                 radii = self.radii,
+                 mode = Dataset.RUNTIME,
+                 similarity_matrix = matrix,
+                 similarity_assays = self.similarity_assays,
+                 indices = indices), self.batch_size, 1, self.prefetch_size)
+        print('generator time: ', time.time() - start)
 
         num_samples = len(indices)
 
@@ -388,13 +404,16 @@ class VariationalPeakModel():
             inputs_b = f[:-2]
             truth_b = f[-2]
             weights_b = f[-1]
+            start = time.time()
             preds_b = self.predict_step_generator(inputs_b)
+            print('preds time: ', time.time() - start)
 
             preds.append(preds_b)
             truth.append(truth_b)
             sample_weight.append(weights_b)
 
         # concat all results
+        start = time.time()
         preds = tf.concat(preds, axis=0)
 
         truth = tf.concat(truth, axis=0)
@@ -409,6 +428,7 @@ class VariationalPeakModel():
         # sample weights will rule these out anyways when computing metrics
         truth_reset = np.copy(truth)
         truth_reset[truth_reset < Label.UNBOUND.value] = 0
+        print('numpy time: ', time.time() - start)
 
         # do not continue to calculate metrics. Just return predictions and true values
         if (not calculate_metrics):
