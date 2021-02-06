@@ -29,6 +29,8 @@ import logging
 import pickle
 from operator import itemgetter
 
+import time
+
 #######################################################################
 #################### Variational Peak Model ###########################
 #######################################################################
@@ -309,6 +311,17 @@ class VariationalPeakModel():
                  similarity_matrix = matrix,
                  similarity_targets = self.dataset.similarity_targets,
                  indices = indices), self.batch_size, 1, self.prefetch_size)
+        
+        start = time.time()
+        # print(type(input_shapes))
+        # print(type(output_shape))
+        # print(type(ds))
+        lel = ds.take(int(len(indices) / self.batch_size)+1)
+        # print(type(lel))
+        # for i in lel:
+        #     pass
+
+        print('generator time: ', time.time() - start)
 
         num_samples = len(indices)
 
@@ -385,15 +398,20 @@ class VariationalPeakModel():
         sample_weight = []
 
         for f in tqdm.tqdm(iter_.take(batches)):
+            start = time.time()
             inputs_b = f[:-2]
             truth_b = f[-2]
             weights_b = f[-1]
+            print('unpack time: ', time.time() - start)
+            start = time.time()
             preds_b = self.predict_step_generator(inputs_b)
+            print('preds time: ', time.time() - start)
 
             preds.append(preds_b)
             truth.append(truth_b)
             sample_weight.append(weights_b)
 
+        start = time.time()
         # concat all results
         preds = tf.concat(preds, axis=0)
 
@@ -409,6 +427,7 @@ class VariationalPeakModel():
         # sample weights will rule these out anyways when computing metrics
         truth_reset = np.copy(truth)
         truth_reset[truth_reset < Label.UNBOUND.value] = 0
+        print('numpy time: ', time.time() - start)
 
         # do not continue to calculate metrics. Just return predictions and true values
         if (not calculate_metrics):
